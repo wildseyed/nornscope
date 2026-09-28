@@ -11,7 +11,7 @@ support needed.
 
 - **Video out:** the norns streams its 128×64 screen over the network via
   [ndi-mod](https://github.com/Dewb/ndi-mod) (NDI protocol). nornscope receives
-  it with the official NDI SDK and renders it, integer-scaled.
+  it with the official NDI SDK and renders it in a resizable window.
 - **Control in:** key and encoder events are injected through matron's
   websocket REPL (`ws://<norns>:5555`, the same channel the maiden editor
   uses) by evaluating `_norns.key(n,z)` / `_norns.enc(n,d)` — the exact
@@ -21,15 +21,19 @@ support needed.
 
 ## Features
 
-- Live screen view, pixel-perfect integer scaling, resizable window
+- Live screen view in a resizable window
 - **K1 / K2 / K3** — click to tap; press and drag off the button to leave it
   held ("sticky"); click again to release. Combos are played the way the
   hardware encourages: stick K1 like a Shift key, then tap K2/K3.
 - **E1 / E2 / E3** — hover and scroll; 3 wheel ticks per encoder detent so
   values don't fly off (`WHEEL_PER_DETENT`)
 - Connection status dot (green = control channel live, red = dropped)
-- Auto-reconnect of the control channel; all keys released on exit so the
-  device is never left with a stuck key
+- **Self-healing connections:** the control channel heartbeats every 3 s and
+  reconnects when replies stop, and the video receiver re-runs discovery after
+  10 s without frames — a norns reboot recovers by itself within ~15 s
+- Every key/encoder injection is logged with the exact Lua sent; send failures
+  are marked loudly
+- All keys released on exit so the device is never left with a stuck key
 - Control host auto-derived from the NDI source address — zero config
 
 ## Requirements
@@ -81,7 +85,8 @@ Helpers:
 
 ```sh
 ./ndi_grab                          # CLI: discover, grab one frame -> /tmp/norns_ndi.ppm
-python3 tools/ws_send.py '<lua>'    # one-off commands on the matron REPL
+python3 tools/ws_send.py '<lua>'    # one-off commands on the matron REPL (fire and forget)
+python3 tools/ws_q.py '<lua>'       # same, but prints matron's reply
 ```
 
 `ws_send.py` examples:
@@ -89,7 +94,7 @@ python3 tools/ws_send.py '<lua>'    # one-off commands on the matron REPL
 ```sh
 python3 tools/ws_send.py '_norns.key(3,1)' '_norns.key(3,0)'   # tap K3
 python3 tools/ws_send.py '_norns.enc(1,-2)'                      # E1 CCW 2
-python3 tools/ws_send.py 'print(norns.menu.status())'
+python3 tools/ws_q.py 'print(norns.menu.status())'               # query, see the answer
 ```
 
 ## Troubleshooting
@@ -106,6 +111,10 @@ python3 tools/ws_send.py 'print(norns.menu.status())'
   ```sh
   flatpak override --user --system-talk-name=org.freedesktop.Avahi com.obsproject.Studio
   ```
+- **Keys stop reaching the norns (e.g. after it reboots):** the viewer should
+  recover on its own within ~15 s (heartbeat + reconnect). If the status dot
+  stays red, check the log on stderr — every injected event is logged as
+  `sent: <lua>`, with `(FAILED)` on errors.
 - **Flaky stream on recent norns OS:** the 60 Hz display refresh change broke
   ndi-mod for some users; norns update 2.9.4 (2026-01) shipped a screen-context
   fix for it. Keep the norns updated.
@@ -116,6 +125,7 @@ python3 tools/ws_send.py 'print(norns.menu.status())'
 src/ndi_view.cpp   GUI viewer + remote control (SDL2 + NDI SDK + ws REPL)
 src/ndi_grab.cpp   single-frame CLI grabber / connectivity test
 tools/ws_send.py   minimal stdlib websocket client for the matron REPL
+tools/ws_q.py      same, printing matron's replies
 norns/mod.lua      ndi-mod patch: stream system menus too
 Makefile           build (set NDI_SDK=<path> if not using the ./ndi-sdk symlink)
 ```
