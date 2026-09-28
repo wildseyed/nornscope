@@ -23,7 +23,7 @@
 #include <Processing.NDI.Lib.h>
 
 // ---------------- config ----------------
-static const int   LW = 128, LH = 132;     // logical canvas
+static const int   LW = 128, LH = 120;     // logical canvas
 static const int   SCALE = 5;
 static const float WHEEL_PER_DETENT = 3.f; // wheel sensitivity (higher = less sensitive)
 
@@ -270,9 +270,6 @@ int main(int argc, char** argv) {
         {{  8, 100, 18, 16}, "K1", {1, 0}, 1},
         {{ 55, 100, 18, 16}, "K2", {2, 0}, 1},
         {{102, 100, 18, 16}, "K3", {3, 0}, 1},
-        {{  2, 120, 40, 11}, "K1+K2", {1, 2}, 2},
-        {{ 44, 120, 40, 11}, "K1+K3", {1, 3}, 2},
-        {{ 86, 120, 40, 11}, "K2+K3", {2, 3}, 2},
     };
     const int NBTN = sizeof buttons / sizeof buttons[0];
     EncZone encs[] = {

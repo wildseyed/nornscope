@@ -23,11 +23,8 @@ support needed.
 
 - Live screen view, pixel-perfect integer scaling, resizable window
 - **K1 / K2 / K3** — click to tap; press and drag off the button to leave it
-  held; click again to release
-- **K1+K2 / K1+K3 / K2+K3** — dedicated combo buttons: both key-downs sent
-  atomically (single REPL line), with a 250 ms minimum hold so scripts see a
-  deliberate overlapping press even on a fast click (`COMBO_MIN_HOLD_MS` in
-  `src/ndi_view.cpp`)
+  held ("sticky"); click again to release. Combos are played the way the
+  hardware encourages: stick K1 like a Shift key, then tap K2/K3.
 - **E1 / E2 / E3** — hover and scroll; 3 wheel ticks per encoder detent so
   values don't fly off (`WHEEL_PER_DETENT`)
 - Connection status dot (green = control channel live, red = dropped)
