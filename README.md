@@ -123,6 +123,10 @@ norns/mod.lua      ndi-mod patch: stream system menus too
 Makefile           build (set NDI_SDK=<path> if not using the ./ndi-sdk symlink)
 ```
 
+## License
+
+[MIT](LICENSE) — use it for anything, just keep the copyright notice.
+
 ## Credits
 
 - [Dewb/ndi-mod](https://github.com/Dewb/ndi-mod) — the norns-side NDI sender
