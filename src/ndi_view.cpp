@@ -74,6 +74,8 @@ struct WSClient {
     std::string host;
     int port = 5555;
     double last_try = 0;
+    double last_hb = 0;
+    int hb_miss = 0;
 
     bool connected() const { return fd >= 0; }
 
@@ -133,7 +135,26 @@ struct WSClient {
     void drain() {  // discard server replies so buffers don't fill
         if (fd < 0) return;
         char buf[4096];
-        while (recv(fd, buf, sizeof buf, 0) > 0) {}
+        ssize_t n;
+        while ((n = recv(fd, buf, sizeof buf, 0)) > 0) hb_miss = 0;
+        if (n == 0) {  // orderly close from peer
+            fprintf(stderr, "ws: peer closed connection\n");
+            disconnect();
+        }
+    }
+
+    // matron replies <ok> to every line; if several heartbeats go unanswered
+    // the socket is dead (e.g. device rebooted without a FIN)
+    void heartbeat(double now) {
+        if (fd < 0) return;
+        if (now - last_hb < 3.0) return;
+        last_hb = now;
+        if (++hb_miss > 4) {
+            fprintf(stderr, "ws: heartbeat lost, reconnecting\n");
+            disconnect();
+            return;
+        }
+        send_lua("--hb");
     }
 
     bool send_lua(const char* line) {
@@ -278,9 +299,12 @@ int main(int argc, char** argv) {
     };
 
     Button* active = nullptr;
+    double last_video = SDL_GetTicks() / 1000.0;
     while (running) {
-        ws.ensure(SDL_GetTicks() / 1000.0);
+        double now_s = SDL_GetTicks() / 1000.0;
+        ws.ensure(now_s);
         ws.drain();
+        ws.heartbeat(now_s);
 
         // deferred combo releases (minimum hold enforcement)
         for (int i = 0; i < NBTN; i++) {
@@ -356,8 +380,9 @@ int main(int argc, char** argv) {
         NDIlib_video_frame_v2_t video;
         NDIlib_audio_frame_v3_t audio;
         NDIlib_metadata_frame_t meta;
-        switch (NDIlib_recv_capture_v3(recv, &video, &audio, &meta, 30)) {
+        if (recv) switch (NDIlib_recv_capture_v3(recv, &video, &audio, &meta, 30)) {
             case NDIlib_frame_type_video:
+                last_video = now_s;
                 if (!tex || video.xres != tex_w || video.yres != tex_h) {
                     if (tex) SDL_DestroyTexture(tex);
                     tex_w = video.xres; tex_h = video.yres;
@@ -369,6 +394,28 @@ int main(int argc, char** argv) {
             case NDIlib_frame_type_audio:  NDIlib_recv_free_audio_v3(recv, &audio); break;
             case NDIlib_frame_type_metadata: NDIlib_recv_free_metadata(recv, &meta); break;
             default: break;
+        }
+
+        // video stalled (device rebooted / sender restarted): re-find and reconnect
+        if (now_s - last_video > 10.0) {
+            fprintf(stderr, "ndi: no video for 10s, reconnecting...\n");
+            NDIlib_find_wait_for_sources(finder, 2000);
+            uint32_t n2 = 0;
+            const NDIlib_source_t* list = NDIlib_find_get_current_sources(finder, &n2);
+            for (uint32_t i = 0; i < n2; i++) {
+                if (strstr(list[i].p_ndi_name, match)) {
+                    src_copy = list[i];
+                    if (recv) NDIlib_recv_destroy(recv);
+                    recv_desc.source_to_connect_to = src_copy;
+                    recv = NDIlib_recv_create_v3(&recv_desc);
+                    if (recv) {
+                        NDIlib_recv_connect(recv, &src_copy);
+                        fprintf(stderr, "ndi: reconnected to '%s'\n", src_copy.p_ndi_name);
+                    }
+                    break;
+                }
+            }
+            last_video = now_s;  // retry at most every 10s
         }
 
         // ---- draw ----
