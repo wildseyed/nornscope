@@ -1,0 +1,5 @@
+ndi_view
+ndi_grab
+ndi-sdk
+*.o
+__pycache__/
