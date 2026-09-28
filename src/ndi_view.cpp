@@ -174,12 +174,19 @@ struct WSClient {
         return true;
     }
 
-    void key(int n, int z) { char b[64]; snprintf(b, 64, "_norns.key(%d,%d)", n, z); send_lua(b); }
+    void key(int n, int z) {
+        char b[64]; snprintf(b, 64, "_norns.key(%d,%d)", n, z);
+        fprintf(stderr, "sent: %s %s\n", b, send_lua(b) ? "" : "(FAILED)");
+    }
     // both events in one REPL line so they evaluate back-to-back
     void key2(int a, int za, int b, int zb) {
-        char b_[128]; snprintf(b_, 128, "_norns.key(%d,%d) _norns.key(%d,%d)", a, za, b, zb); send_lua(b_);
+        char b_[128]; snprintf(b_, 128, "_norns.key(%d,%d) _norns.key(%d,%d)", a, za, b, zb);
+        fprintf(stderr, "sent: %s %s\n", b_, send_lua(b_) ? "" : "(FAILED)");
     }
-    void enc(int n, int d) { char b[64]; snprintf(b, 64, "_norns.enc(%d,%d)", n, d); send_lua(b); }
+    void enc(int n, int d) {
+        char b[64]; snprintf(b, 64, "_norns.enc(%d,%d)", n, d);
+        if (!send_lua(b)) fprintf(stderr, "sent: %s (FAILED)\n", b);
+    }
 };
 
 // ---------------- UI model ----------------
