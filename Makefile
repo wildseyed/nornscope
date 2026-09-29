@@ -6,15 +6,15 @@ CXXFLAGS := -O2 -I$(SDK_INC)
 LDFLAGS := -L$(SDK_LIB) -lndi -ldl -lpthread -Wl,-rpath,$(abspath $(SDK_LIB))
 SDL_FLAGS := $(shell pkg-config --cflags --libs sdl2)
 
-all: ndi_view ndi_grab
+all: nornscope ndi_grab
 
-ndi_view: src/ndi_view.cpp
+nornscope: src/nornscope.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS) $(SDL_FLAGS) -lm
 
 ndi_grab: src/ndi_grab.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
 clean:
-	rm -f ndi_view ndi_grab
+	rm -f nornscope ndi_grab
 
 .PHONY: all clean

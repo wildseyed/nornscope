@@ -1,4 +1,4 @@
-// ndi_view — live NDI viewer + norns remote control
+// nornscope — live NDI viewer + norns remote control
 //
 // Screen: streamed via NDI (libndi).
 // Input:  injected via matron's websocket REPL (_norns.key / _norns.enc),
@@ -249,7 +249,7 @@ int main(int argc, char** argv) {
     recv_desc.color_format = NDIlib_recv_color_format_BGRX_BGRA;
     recv_desc.bandwidth = NDIlib_recv_bandwidth_highest;
     recv_desc.allow_video_fields = false;
-    recv_desc.p_ndi_recv_name = "ndi-view";
+    recv_desc.p_ndi_recv_name = "nornscope";
     NDIlib_recv_instance_t recv = NDIlib_recv_create_v3(&recv_desc);
     if (!recv) { fprintf(stderr, "recv_create failed\n"); return 1; }
     NDIlib_recv_connect(recv, src);
@@ -258,7 +258,7 @@ int main(int argc, char** argv) {
     signal(SIGINT, on_sig);
     signal(SIGTERM, on_sig);
 
-    SDL_Window* win = SDL_CreateWindow("norns remote",
+    SDL_Window* win = SDL_CreateWindow("nornscope",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, LW * SCALE, LH * SCALE,
         SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);

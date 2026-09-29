@@ -77,8 +77,8 @@ script reloads (norns frees all metros on script change).
 ## Usage
 
 ```sh
-./ndi_view            # connect to first NDI source matching "NORNS"
-./ndi_view MySource   # match a different source name substring
+./nornscope           # connect to first NDI source matching "NORNS"
+./nornscope MySource  # match a different source name substring
 ```
 
 Helpers:
@@ -122,7 +122,7 @@ python3 tools/ws_q.py 'print(norns.menu.status())'               # query, see th
 ## Repo layout
 
 ```
-src/ndi_view.cpp   GUI viewer + remote control (SDL2 + NDI SDK + ws REPL)
+src/nornscope.cpp  GUI viewer + remote control (SDL2 + NDI SDK + ws REPL)
 src/ndi_grab.cpp   single-frame CLI grabber / connectivity test
 tools/ws_send.py   minimal stdlib websocket client for the matron REPL
 tools/ws_q.py      same, printing matron's replies
