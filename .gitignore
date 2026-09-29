@@ -1,5 +1,8 @@
 nornscope
 ndi_grab
+*.exe
+dist/
+sdl2-mingw/
 ndi-sdk
 *.o
 __pycache__/

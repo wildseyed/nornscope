@@ -14,13 +14,43 @@
 #include <cmath>
 #include <string>
 #include <stdint.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <sys/socket.h>
-#include <sys/time.h>
+#ifdef _WIN32
+  #define SDL_MAIN_HANDLED
+  #define WIN32_LEAN_AND_MEAN
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  #include <windows.h>
+  #define MSG_NOSIGNAL 0
+
+  static void sock_global_init() { WSADATA w; WSAStartup(MAKEWORD(2,2), &w); }
+  static void sock_close(SOCKET s) { closesocket(s); }
+  static void sock_nonblock(SOCKET s) { u_long m = 1; ioctlsocket(s, FIONBIO, &m); }
+  static void sock_timeouts(SOCKET s) {
+      DWORD t = 3000;
+      setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&t, sizeof t);
+      setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char*)&t, sizeof t);
+  }
+#else
+  #include <unistd.h>
+  #include <fcntl.h>
+  #include <netdb.h>
+  #include <sys/socket.h>
+  #include <sys/time.h>
+  typedef int SOCKET;
+  #define INVALID_SOCKET (-1)
+  static void sock_global_init() {}
+  static void sock_close(SOCKET s) { close(s); }
+  static void sock_nonblock(SOCKET s) { int f = fcntl(s, F_GETFL, 0); fcntl(s, F_SETFL, f | O_NONBLOCK); }
+  static void sock_timeouts(SOCKET s) {
+      timeval tv{3, 0};
+      setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+      setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+  }
+#endif
 #include <SDL.h>
-#include <Processing.NDI.Lib.h>
+#include "ndi_loader.h"
+
+static const NDIlib_v6* NDI = nullptr;
 
 // ---------------- config ----------------
 static const int   LW = 128, LH = 120;     // logical canvas
@@ -70,14 +100,14 @@ static std::string b64(const uint8_t* d, size_t n) {
 
 // ---------------- minimal websocket client (fire-and-forget text frames) ----------------
 struct WSClient {
-    int fd = -1;
+    SOCKET fd = INVALID_SOCKET;
     std::string host;
     int port = 5555;
     double last_try = 0;
     double last_hb = 0;
     int hb_miss = 0;
 
-    bool connected() const { return fd >= 0; }
+    bool connected() const { return fd != INVALID_SOCKET; }
 
     bool connect_now() {
         disconnect();
@@ -85,12 +115,10 @@ struct WSClient {
         hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM;
         char portstr[8]; snprintf(portstr, 8, "%d", port);
         if (getaddrinfo(host.c_str(), portstr, &hints, &res) != 0) return false;
-        int s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+        SOCKET s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
         bool ok = false;
-        if (s >= 0) {
-            timeval tv{3, 0};
-            setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-            setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+        if (s != INVALID_SOCKET) {
+            sock_timeouts(s);
             if (::connect(s, res->ai_addr, res->ai_addrlen) == 0) {
                 uint8_t raw[16];
                 for (int i = 0; i < 16; i++) raw[i] = rand() & 0xff;
@@ -115,11 +143,10 @@ struct WSClient {
         }
         if (res) freeaddrinfo(res);
         if (ok) {
-            int flags = fcntl(s, F_GETFL, 0);
-            fcntl(s, F_SETFL, flags | O_NONBLOCK);
+            sock_nonblock(s);
             fd = s;
             fprintf(stderr, "ws: connected to %s:%d\n", host.c_str(), port);
-        } else if (s >= 0) close(s);
+        } else if (s != INVALID_SOCKET) sock_close(s);
         return ok;
     }
 
@@ -130,10 +157,10 @@ struct WSClient {
         }
     }
 
-    void disconnect() { if (fd >= 0) { close(fd); fd = -1; } }
+    void disconnect() { if (fd != INVALID_SOCKET) { sock_close(fd); fd = INVALID_SOCKET; } }
 
     void drain() {  // discard server replies so buffers don't fill
-        if (fd < 0) return;
+        if (fd == INVALID_SOCKET) return;
         char buf[4096];
         ssize_t n;
         while ((n = recv(fd, buf, sizeof buf, 0)) > 0) hb_miss = 0;
@@ -146,7 +173,7 @@ struct WSClient {
     // matron replies <ok> to every line; if several heartbeats go unanswered
     // the socket is dead (e.g. device rebooted without a FIN)
     void heartbeat(double now) {
-        if (fd < 0) return;
+        if (fd == INVALID_SOCKET) return;
         if (now - last_hb < 3.0) return;
         last_hb = now;
         if (++hb_miss > 4) {
@@ -158,7 +185,7 @@ struct WSClient {
     }
 
     bool send_lua(const char* line) {
-        if (fd < 0) return false;
+        if (fd == INVALID_SOCKET) return false;
         std::string p = std::string(line) + "\n";
         size_t n = p.size();
         uint8_t hdr[14]; size_t h = 0;
@@ -169,7 +196,7 @@ struct WSClient {
         memcpy(hdr + h, mask, 4); h += 4;
         std::string frame((char*)hdr, h);
         for (size_t i = 0; i < n; i++) frame += (char)(p[i] ^ mask[i % 4]);
-        ssize_t w = send(fd, frame.data(), frame.size(), MSG_NOSIGNAL);
+        ssize_t w = send(fd, frame.data(), (int)frame.size(), MSG_NOSIGNAL);
         if (w < (ssize_t)frame.size()) { disconnect(); return false; }
         return true;
     }
@@ -216,20 +243,32 @@ static void on_sig(int) { running = false; }
 int main(int argc, char** argv) {
     const char* match = argc > 1 ? argv[1] : "NORNS";
     srand(12345);
+    sock_global_init();
+#ifdef _WIN32
+    SDL_SetMainReady();
+#endif
 
-    if (!NDIlib_initialize()) { fprintf(stderr, "NDI init failed\n"); return 1; }
+    NDI = ndi_load_runtime();
+    if (!NDI || !NDI->initialize()) {
+        fprintf(stderr, "NDI runtime not found or init failed\n"
+#ifdef _WIN32
+                        "(install NDI Runtime 6: https://ndi.link/NDIRedistV6)\n"
+#endif
+        );
+        return 1;
+    }
     NDIlib_find_create_t find_desc = {};
     find_desc.show_local_sources = true;
-    NDIlib_find_instance_t finder = NDIlib_find_create_v2(&find_desc);
+    NDIlib_find_instance_t finder = NDI->NDIlib_find_create_v2(&find_desc);
     if (!finder) { fprintf(stderr, "find_create failed\n"); return 1; }
 
     printf("Looking for NDI source matching '%s'...\n", match);
     const NDIlib_source_t* src = nullptr;
     NDIlib_source_t src_copy;
     for (int a = 0; a < 20 && !src; a++) {
-        NDIlib_find_wait_for_sources(finder, 1000);
+        NDI->NDIlib_find_wait_for_sources(finder, 1000);
         uint32_t n = 0;
-        const NDIlib_source_t* sources = NDIlib_find_get_current_sources(finder, &n);
+        const NDIlib_source_t* sources = NDI->NDIlib_find_get_current_sources(finder, &n);
         for (uint32_t i = 0; i < n; i++)
             if (strstr(sources[i].p_ndi_name, match)) { src_copy = sources[i]; src = &src_copy; break; }
     }
@@ -250,9 +289,9 @@ int main(int argc, char** argv) {
     recv_desc.bandwidth = NDIlib_recv_bandwidth_highest;
     recv_desc.allow_video_fields = false;
     recv_desc.p_ndi_recv_name = "nornscope";
-    NDIlib_recv_instance_t recv = NDIlib_recv_create_v3(&recv_desc);
+    NDIlib_recv_instance_t recv = NDI->NDIlib_recv_create_v3(&recv_desc);
     if (!recv) { fprintf(stderr, "recv_create failed\n"); return 1; }
-    NDIlib_recv_connect(recv, src);
+    NDI->NDIlib_recv_connect(recv, src);
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) { fprintf(stderr, "SDL: %s\n", SDL_GetError()); return 1; }
     signal(SIGINT, on_sig);
@@ -384,7 +423,7 @@ int main(int argc, char** argv) {
         NDIlib_video_frame_v2_t video;
         NDIlib_audio_frame_v3_t audio;
         NDIlib_metadata_frame_t meta;
-        if (recv) switch (NDIlib_recv_capture_v3(recv, &video, &audio, &meta, 30)) {
+        if (recv) switch (NDI->NDIlib_recv_capture_v3(recv, &video, &audio, &meta, 30)) {
             case NDIlib_frame_type_video:
                 last_video = now_s;
                 if (!tex || video.xres != tex_w || video.yres != tex_h) {
@@ -393,27 +432,27 @@ int main(int argc, char** argv) {
                     tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_BGRX32, SDL_TEXTUREACCESS_STREAMING, tex_w, tex_h);
                 }
                 SDL_UpdateTexture(tex, nullptr, video.p_data, video.line_stride_in_bytes);
-                NDIlib_recv_free_video_v2(recv, &video);
+                NDI->NDIlib_recv_free_video_v2(recv, &video);
                 break;
-            case NDIlib_frame_type_audio:  NDIlib_recv_free_audio_v3(recv, &audio); break;
-            case NDIlib_frame_type_metadata: NDIlib_recv_free_metadata(recv, &meta); break;
+            case NDIlib_frame_type_audio:  NDI->NDIlib_recv_free_audio_v3(recv, &audio); break;
+            case NDIlib_frame_type_metadata: NDI->NDIlib_recv_free_metadata(recv, &meta); break;
             default: break;
         }
 
         // video stalled (device rebooted / sender restarted): re-find and reconnect
         if (now_s - last_video > 10.0) {
             fprintf(stderr, "ndi: no video for 10s, reconnecting...\n");
-            NDIlib_find_wait_for_sources(finder, 2000);
+            NDI->NDIlib_find_wait_for_sources(finder, 2000);
             uint32_t n2 = 0;
-            const NDIlib_source_t* list = NDIlib_find_get_current_sources(finder, &n2);
+            const NDIlib_source_t* list = NDI->NDIlib_find_get_current_sources(finder, &n2);
             for (uint32_t i = 0; i < n2; i++) {
                 if (strstr(list[i].p_ndi_name, match)) {
                     src_copy = list[i];
-                    if (recv) NDIlib_recv_destroy(recv);
+                    if (recv) NDI->NDIlib_recv_destroy(recv);
                     recv_desc.source_to_connect_to = src_copy;
-                    recv = NDIlib_recv_create_v3(&recv_desc);
+                    recv = NDI->NDIlib_recv_create_v3(&recv_desc);
                     if (recv) {
-                        NDIlib_recv_connect(recv, &src_copy);
+                        NDI->NDIlib_recv_connect(recv, &src_copy);
                         fprintf(stderr, "ndi: reconnected to '%s'\n", src_copy.p_ndi_name);
                     }
                     break;
@@ -485,8 +524,8 @@ int main(int argc, char** argv) {
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
-    NDIlib_recv_destroy(recv);
-    NDIlib_find_destroy(finder);
-    NDIlib_destroy();
+    NDI->NDIlib_recv_destroy(recv);
+    NDI->NDIlib_find_destroy(finder);
+    NDI->NDIlib_destroy();
     return 0;
 }

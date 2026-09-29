@@ -57,6 +57,23 @@ ln -s "/path/to/NDI SDK for Linux" ndi-sdk
 make
 ```
 
+### Windows (cross-compile from Linux)
+
+Requires `mingw64-gcc-c++` and the official
+[SDL2 mingw development package](https://github.com/libsdl-org/SDL/releases)
+unpacked under `sdl2-mingw/`:
+
+```sh
+make windows        # -> nornscope.exe, ndi_grab.exe
+make dist-windows   # -> dist/nornscope-windows-x64.zip (exes + required DLLs)
+```
+
+The Windows build loads NDI dynamically at runtime, so **no NDI SDK is needed
+to build or run it** — but the Windows machine must have the
+[NDI Runtime 6](https://ndi.link/NDIRedistV6) installed (same requirement as
+OBS DistroAV; if you have that, you're set). All other dependencies
+(SDL2.dll, libwinpthread) are included in the zip.
+
 ## Norns-side setup
 
 1. Install ndi-mod from the maiden console:
@@ -124,10 +141,11 @@ python3 tools/ws_q.py 'print(norns.menu.status())'               # query, see th
 ```
 src/nornscope.cpp  GUI viewer + remote control (SDL2 + NDI SDK + ws REPL)
 src/ndi_grab.cpp   single-frame CLI grabber / connectivity test
+src/ndi_loader.h   runtime NDI loading (dynamic DLL resolution on Windows)
 tools/ws_send.py   minimal stdlib websocket client for the matron REPL
 tools/ws_q.py      same, printing matron's replies
 norns/mod.lua      ndi-mod patch: stream system menus too
-Makefile           build (set NDI_SDK=<path> if not using the ./ndi-sdk symlink)
+Makefile           native + mingw cross-build (set NDI_SDK=, SDL2_MINGW=)
 ```
 
 ## License
