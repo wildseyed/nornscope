@@ -18,6 +18,11 @@ support needed.
   dispatch functions matron calls for physical hardware input. This makes it
   fully generic: scripts, system menus, everything responds as if you touched
   the device.
+- **Feedback:** the mod wraps `_norns.key` / `_norns.enc` and prints tagged
+  lines (`NSQ key 2 1`, …) on the same websocket bus, which matron broadcasts
+  to all connected clients. nornscope parses them and lights up its on-screen
+  controls when the real hardware is touched. nornscope's own injections set
+  a Lua flag first (`nornscope_remote=true`) so they don't echo back.
 
 ## Features
 
@@ -27,6 +32,9 @@ support needed.
   hardware encourages: stick K1 like a Shift key, then tap K2/K3.
 - **E1 / E2 / E3** — hover and scroll; 3 wheel ticks per encoder detent so
   values don't fly off (`WHEEL_PER_DETENT`)
+- **Physical input indicators** — press a real key or turn a real encoder on
+  the norns and the on-screen control lights up amber (knobs also track the
+  turn); requires the `norns/mod.lua` patch below
 - Connection status dot (green = control channel live, red = dropped)
 - **Self-healing connections:** the control channel heartbeats every 3 s and
   reconnects when replies stop, and the video receiver re-runs discovery after
@@ -82,14 +90,19 @@ OBS DistroAV; if you have that, you're set). All other dependencies
    ```
 2. Enable it: SYSTEM > MODS > NDI-MOD (enc 3 to add `+`), then SYSTEM > RESTART.
 
-### Menu-mode patch (recommended)
+### Norns-side patch (recommended)
 
 Stock ndi-mod only pushes a frame when the *script* redraws, so the NDI stream
 freezes on the last script frame whenever you enter the system menu (K1).
 `norns/mod.lua` is a drop-in replacement for
-`~/dust/code/ndi-mod/lib/mod.lua` that adds a 15 Hz metro calling
-`ndi_mod.update()` unconditionally, so menus stream too. It re-arms after
-script reloads (norns frees all metros on script change).
+`~/dust/code/ndi-mod/lib/mod.lua` that:
+
+1. adds a 15 Hz metro calling `ndi_mod.update()` unconditionally, so menus
+   stream too (it re-arms after script reloads — norns frees all metros on
+   script change), and
+2. wraps `_norns.key` / `_norns.enc` to report physical input to nornscope
+   (the indicator feature above). The tagged lines also show up in the
+   maiden console — filter on `NSQ` if you want to watch them.
 
 ## Usage
 
@@ -144,7 +157,7 @@ src/ndi_grab.cpp   single-frame CLI grabber / connectivity test
 src/ndi_loader.h   runtime NDI loading (dynamic DLL resolution on Windows)
 tools/ws_send.py   minimal stdlib websocket client for the matron REPL
 tools/ws_q.py      same, printing matron's replies
-norns/mod.lua      ndi-mod patch: stream system menus too
+norns/mod.lua      ndi-mod patch: stream system menus too + report physical input
 Makefile           native + mingw cross-build (set NDI_SDK=, SDL2_MINGW=)
 ```
 

@@ -13,6 +13,7 @@
 #include <csignal>
 #include <cmath>
 #include <string>
+#include <functional>
 #include <stdint.h>
 #ifdef _WIN32
   #define SDL_MAIN_HANDLED
@@ -21,6 +22,10 @@
   #include <ws2tcpip.h>
   #include <windows.h>
   #define MSG_NOSIGNAL 0
+  #ifdef _MSC_VER
+    #include <BaseTsd.h>
+    typedef SSIZE_T ssize_t;
+  #endif
 
   static void sock_global_init() { WSADATA w; WSAStartup(MAKEWORD(2,2), &w); }
   static void sock_close(SOCKET s) { closesocket(s); }
@@ -98,7 +103,7 @@ static std::string b64(const uint8_t* d, size_t n) {
     return o;
 }
 
-// ---------------- minimal websocket client (fire-and-forget text frames) ----------------
+// ---------------- minimal websocket client (sends Lua, parses matron's broadcast output) ----------------
 struct WSClient {
     SOCKET fd = INVALID_SOCKET;
     std::string host;
@@ -106,6 +111,9 @@ struct WSClient {
     double last_try = 0;
     double last_hb = 0;
     int hb_miss = 0;
+    std::string rx;       // raw bytes, possibly holding partial frames
+    std::string textbuf;  // reassembled text payloads, possibly a partial line
+    std::function<void(const char*)> on_line;  // called for each "NSQ ..." line
 
     bool connected() const { return fd != INVALID_SOCKET; }
 
@@ -145,6 +153,8 @@ struct WSClient {
         if (ok) {
             sock_nonblock(s);
             fd = s;
+            rx.clear();
+            textbuf.clear();
             fprintf(stderr, "ws: connected to %s:%d\n", host.c_str(), port);
         } else if (s != INVALID_SOCKET) sock_close(s);
         return ok;
@@ -159,15 +169,61 @@ struct WSClient {
 
     void disconnect() { if (fd != INVALID_SOCKET) { sock_close(fd); fd = INVALID_SOCKET; } }
 
-    void drain() {  // discard server replies so buffers don't fill
+    // read server traffic: heartbeat replies keep the connection "alive", and
+    // text frames carry matron's broadcast print output, which the norns mod
+    // uses to report physical key/encoder events as "NSQ ..." lines
+    void drain() {
         if (fd == INVALID_SOCKET) return;
         char buf[4096];
         ssize_t n;
-        while ((n = recv(fd, buf, sizeof buf, 0)) > 0) hb_miss = 0;
+        while ((n = recv(fd, buf, sizeof buf, 0)) > 0) {
+            hb_miss = 0;
+            rx.append(buf, n);
+        }
         if (n == 0) {  // orderly close from peer
             fprintf(stderr, "ws: peer closed connection\n");
             disconnect();
+            return;
         }
+        // parse complete websocket frames (server->client, unmasked)
+        size_t off = 0;
+        while (off + 2 <= rx.size()) {
+            uint8_t op = (uint8_t)rx[off] & 0x0f;
+            uint64_t len = (uint8_t)rx[off + 1] & 0x7f;
+            size_t hdr = 2;
+            if (len == 126) {
+                if (off + 4 > rx.size()) break;
+                len = (uint8_t)rx[off + 2] << 8 | (uint8_t)rx[off + 3];
+                hdr = 4;
+            } else if (len == 127) {
+                if (off + 10 > rx.size()) break;
+                len = 0;
+                for (int i = 0; i < 8; i++) len = len << 8 | (uint8_t)rx[off + 2 + i];
+                hdr = 10;
+            }
+            if (off + hdr + len > rx.size()) break;  // incomplete frame
+            if (op == 0x8) {  // close
+                fprintf(stderr, "ws: peer sent close frame\n");
+                disconnect();
+                return;
+            }
+            if (op == 0x1 || op == 0x0)  // text / continuation
+                textbuf.append(rx.data() + off + hdr, (size_t)len);
+            off += hdr + (size_t)len;
+        }
+        rx.erase(0, off);
+        // dispatch complete lines tagged by the mod; the tag is searched, not
+        // anchored, because REPL replies ("<ok>", stray NULs) share the stream
+        size_t pos;
+        while ((pos = textbuf.find('\n')) != std::string::npos) {
+            size_t tag = textbuf.find("NSQ ");
+            if (tag != std::string::npos && tag < pos && on_line) {
+                std::string line = textbuf.substr(tag, pos - tag);
+                on_line(line.c_str());
+            }
+            textbuf.erase(0, pos + 1);
+        }
+        if (textbuf.size() > 65536) textbuf.clear();  // safety against garbage
     }
 
     // matron replies <ok> to every line; if several heartbeats go unanswered
@@ -201,17 +257,19 @@ struct WSClient {
         return true;
     }
 
+    // nornscope_remote tells the mod's input hooks these events are ours,
+    // so they don't get reported back as physical activity
     void key(int n, int z) {
-        char b[64]; snprintf(b, 64, "_norns.key(%d,%d)", n, z);
+        char b[96]; snprintf(b, sizeof b, "nornscope_remote=true _norns.key(%d,%d) nornscope_remote=false", n, z);
         fprintf(stderr, "sent: %s %s\n", b, send_lua(b) ? "" : "(FAILED)");
     }
     // both events in one REPL line so they evaluate back-to-back
     void key2(int a, int za, int b, int zb) {
-        char b_[128]; snprintf(b_, 128, "_norns.key(%d,%d) _norns.key(%d,%d)", a, za, b, zb);
+        char b_[160]; snprintf(b_, sizeof b_, "nornscope_remote=true _norns.key(%d,%d) _norns.key(%d,%d) nornscope_remote=false", a, za, b, zb);
         fprintf(stderr, "sent: %s %s\n", b_, send_lua(b_) ? "" : "(FAILED)");
     }
     void enc(int n, int d) {
-        char b[64]; snprintf(b, 64, "_norns.enc(%d,%d)", n, d);
+        char b[96]; snprintf(b, sizeof b, "nornscope_remote=true _norns.enc(%d,%d) nornscope_remote=false", n, d);
         if (!send_lua(b)) fprintf(stderr, "sent: %s (FAILED)\n", b);
     }
 };
@@ -317,6 +375,21 @@ int main(int argc, char** argv) {
         {{ 88, 68, 38, 28}, "E3", 3},
     };
     const int NENC = sizeof encs / sizeof encs[0];
+
+    // physical input reported by the mod's hooks (see norns/mod.lua)
+    bool phys_key[4] = {};
+    uint32_t phys_enc_at[4] = {};
+    ws.on_line = [&](const char* line) {
+        int n, v;
+        if (sscanf(line, "NSQ key %d %d", &n, &v) == 2 && n >= 1 && n <= 3) {
+            phys_key[n] = (v != 0);
+            fprintf(stderr, "phys: key %d %d\n", n, v);
+        } else if (sscanf(line, "NSQ enc %d %d", &n, &v) == 2 && n >= 1 && n <= 3) {
+            phys_enc_at[n] = SDL_GetTicks();
+            if (v > 4) v = 4; else if (v < -4) v = -4;
+            encs[n - 1].angle += 0.5f * v;
+        }
+    };
 
     ws.ensure(6.0);  // first connect attempt now
 
@@ -478,11 +551,13 @@ int main(int argc, char** argv) {
         for (int i = 0; i < NENC; i++) {  // encoder knobs
             EncZone& e = encs[i];
             int cx = e.r.x + e.r.w / 2, cy = e.r.y + 16, rad = 9;
+            bool eactive = SDL_GetTicks() - phys_enc_at[e.n] < 150;  // turned physically just now
             SDL_SetRenderDrawColor(ren, 90, 90, 90, 255);
             draw_text(ren, cx - text_w(e.label) / 2, e.r.y + 1, e.label);
             // circle (midpoint)
             int x = rad, y = 0, err = 1 - rad;
-            SDL_SetRenderDrawColor(ren, 200, 200, 200, 255);
+            if (eactive) SDL_SetRenderDrawColor(ren, 250, 190, 80, 255);
+            else         SDL_SetRenderDrawColor(ren, 200, 200, 200, 255);
             while (x >= y) {
                 SDL_Point pts[8] = {{cx+x,cy+y},{cx+y,cy+x},{cx-y,cy+x},{cx-x,cy+y},
                                     {cx-x,cy-y},{cx-y,cy-x},{cx+y,cy-x},{cx+x,cy-y}};
@@ -496,8 +571,13 @@ int main(int argc, char** argv) {
         }
         for (int i = 0; i < NBTN; i++) {  // buttons
             Button& b = buttons[i];
+            bool phys = phys_key[b.keys[0]];  // held on the device itself
             if (b.held) {
                 SDL_SetRenderDrawColor(ren, 230, 230, 230, 255);
+                SDL_RenderFillRect(ren, &b.r);
+                SDL_SetRenderDrawColor(ren, 20, 20, 20, 255);
+            } else if (phys) {
+                SDL_SetRenderDrawColor(ren, 250, 190, 80, 255);
                 SDL_RenderFillRect(ren, &b.r);
                 SDL_SetRenderDrawColor(ren, 20, 20, 20, 255);
             } else {
