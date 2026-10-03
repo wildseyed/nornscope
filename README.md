@@ -104,6 +104,20 @@ freezes on the last script frame whenever you enter the system menu (K1).
    (the indicator feature above). The tagged lines also show up in the
    maiden console — filter on `NSQ` if you want to watch them.
 
+To install it, copy the file over the one ndi-mod shipped, keeping a backup
+of the original:
+
+```sh
+ssh we@norns.local 'cp dust/code/ndi-mod/lib/mod.lua dust/code/ndi-mod/lib/mod.lua.orig'
+scp norns/mod.lua we@norns.local:dust/code/ndi-mod/lib/mod.lua
+```
+
+(replace `norns.local` with your device's IP if mDNS doesn't resolve), then
+SYSTEM > RESTART on the norns so matron reloads the mod. To go back to stock,
+copy `mod.lua.orig` back over `mod.lua` and restart again. Note that
+reinstalling or updating ndi-mod will overwrite the patch — re-apply it
+afterwards.
+
 ## Usage
 
 ```sh
@@ -165,8 +179,16 @@ Makefile           native + mingw cross-build (set NDI_SDK=, SDL2_MINGW=)
 
 [MIT](LICENSE) — use it for anything, just keep the copyright notice.
 
+`norns/mod.lua` is borrowed and modified from
+[Dewb/ndi-mod](https://github.com/Dewb/ndi-mod) (© 2022 Michael Dewberry),
+which is also MIT. The MIT terms under which that code is reused: it may be
+copied, modified, and redistributed freely, provided the original copyright
+notice and permission notice are included — they are reproduced in full in the
+header comment of `norns/mod.lua`.
+
 ## Credits
 
 - [Dewb/ndi-mod](https://github.com/Dewb/ndi-mod) — the norns-side NDI sender
+  (see License above for the reuse terms of its `mod.lua`)
 - NDI® is a trademark of Vizrt/NewTek; the NDI SDK is used under its license
 - [monome norns](https://github.com/monome/norns)

@@ -1,3 +1,34 @@
+-- nornscope patch for ndi-mod
+-- install as ~/dust/code/ndi-mod/lib/mod.lua (see README "Norns-side patch")
+--
+-- This file is based on mod/lib/mod.lua from ndi-mod
+-- (https://github.com/Dewb/ndi-mod). The three mod.hook.register blocks are
+-- upstream code; the nornscope additions are:
+--   start_stream_metro()  - keep streaming while in system menus
+--   install_input_hooks() - report physical key/encoder input to nornscope
+--
+-- ndi-mod is released under the MIT License:
+--
+-- Copyright (c) 2022 Michael Dewberry
+--
+-- Permission is hereby granted, free of charge, to any person obtaining a copy
+-- of this software and associated documentation files (the "Software"), to deal
+-- in the Software without restriction, including without limitation the rights
+-- to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+-- copies of the Software, and to permit persons to whom the Software is
+-- furnished to do so, subject to the following conditions:
+--
+-- The above copyright notice and this permission notice shall be included in
+-- all copies or substantial portions of the Software.
+--
+-- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+-- IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+-- FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+-- AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+-- LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+-- OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+-- THE SOFTWARE.
+
 local mod = require 'core/mods'
 
 local this_name = mod.this_name
