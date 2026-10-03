@@ -13,7 +13,13 @@ static const NDIlib_v6* NDI = nullptr;
 int main() {
     NDI = ndi_load_runtime();
     if (!NDI || !NDI->initialize()) {
-        printf("NDIlib_initialize failed\n");
+        printf("NDIlib_initialize failed (NDI runtime not found"
+#ifdef _WIN32
+               " — install NDI Runtime 6: https://ndi.link/NDIRedistV6"
+#else
+               " — install libndi from the NDI SDK for Linux"
+#endif
+               ")\n");
         return 1;
     }
 

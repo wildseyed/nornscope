@@ -46,10 +46,10 @@ support needed.
 
 ## Requirements
 
-**Desktop (Linux; developed on Fedora):**
-- g++, SDL2 (`SDL2-devel`), pkg-config
-- [NDI SDK v6 for Linux](https://downloads.ndi.tv/SDK/NDI_SDK_Linux/Install_NDI_SDK_v6_Linux.tar.gz)
-  (free, license-restricted — not vendored here)
+**Desktop (Linux or Windows):**
+- SDL2 (Linux only; the Windows zip bundles `SDL2.dll`)
+- NDI runtime libraries (see per-OS install below; free, license-restricted —
+  not vendored here)
 - Same LAN/subnet as the norns (NDI discovery uses mDNS)
 
 **Norns:**
@@ -57,10 +57,38 @@ support needed.
   (SYSTEM > MODS, then SYSTEM > RESTART)
 - Recommended: the menu-mode streaming patch below
 
+## Install (from a release)
+
+**Linux** — unpack the tarball and install the two runtime dependencies:
+
+```sh
+tar -xzf nornscope-linux-x64.tar.gz
+
+# SDL2:
+sudo dnf install SDL2             # Fedora
+sudo apt install libsdl2-2.0-0    # Debian/Ubuntu
+
+# libndi, from the NDI SDK v6 for Linux tarball
+# (https://downloads.ndi.tv/SDK/NDI_SDK_Linux/Install_NDI_SDK_v6_Linux.tar.gz):
+sudo cp "NDI SDK for Linux/lib/x86_64-linux-gnu/libndi.so.6"* /usr/local/lib/
+sudo ldconfig
+# or, without installing system-wide, point the loader at the SDK's lib dir:
+export NDI_RUNTIME_DIR_V6="/path/to/NDI SDK for Linux/lib/x86_64-linux-gnu"
+```
+
+**Windows** — unzip `nornscope-windows-x64.zip` anywhere and install the
+[NDI Runtime 6](https://ndi.link/NDIRedistV6) (same requirement as OBS
+DistroAV; if you have that, you're set). All other dependencies are in the zip.
+
 ## Build
 
 ```sh
-# download and unpack the NDI SDK, then symlink it into the repo:
+# build tools + SDL2 headers:
+sudo dnf install gcc-c++ SDL2-devel pkgconf-pkg-config   # Fedora
+sudo apt install g++ libsdl2-dev pkg-config              # Debian/Ubuntu
+
+# download and unpack the NDI SDK (headers only — libndi is dlopened at
+# runtime), then symlink it into the repo:
 ln -s "/path/to/NDI SDK for Linux" ndi-sdk
 make
 ```
@@ -78,9 +106,19 @@ make dist-windows   # -> dist/nornscope-windows-x64.zip (exes + required DLLs)
 
 The Windows build loads NDI dynamically at runtime, so **no NDI SDK is needed
 to build or run it** — but the Windows machine must have the
-[NDI Runtime 6](https://ndi.link/NDIRedistV6) installed (same requirement as
-OBS DistroAV; if you have that, you're set). All other dependencies
+[NDI Runtime 6](https://ndi.link/NDIRedistV6) installed. All other dependencies
 (SDL2.dll, libwinpthread) are included in the zip.
+
+### Release artifacts
+
+```sh
+make dist-linux     # -> dist/nornscope-linux-x64.tar.gz
+make dist-windows   # -> dist/nornscope-windows-x64.zip
+```
+
+Both builds resolve NDI at runtime (`dlopen` / `LoadLibrary`), so neither
+artifact contains or requires the NDI SDK — end users install the NDI
+libraries themselves per the Install section above.
 
 ## Norns-side setup
 

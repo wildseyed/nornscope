@@ -3,7 +3,7 @@ SDK_INC := $(NDI_SDK)/include
 SDK_LIB := $(NDI_SDK)/lib/x86_64-linux-gnu
 
 CXXFLAGS := -O2 -I$(SDK_INC)
-LDFLAGS := -L$(SDK_LIB) -lndi -ldl -lpthread -Wl,-rpath,$(abspath $(SDK_LIB))
+LDFLAGS := -ldl -lpthread
 SDL_FLAGS := $(shell pkg-config --cflags --libs sdl2)
 
 # Windows cross-build (mingw-w64 + official SDL2 mingw dev package)
@@ -37,7 +37,13 @@ dist-windows: windows
 	cp nornscope.exe ndi_grab.exe dist/
 	cd dist && zip -q nornscope-windows-x64.zip nornscope.exe ndi_grab.exe SDL2.dll libwinpthread-1.dll
 
+# tarball with the Linux binaries (libndi is dlopened at runtime, so the
+# NDI SDK is not needed to build or ship these — users install it separately)
+dist-linux: all
+	mkdir -p dist
+	tar -czf dist/nornscope-linux-x64.tar.gz nornscope ndi_grab README.md LICENSE
+
 clean:
 	rm -f nornscope ndi_grab nornscope.exe ndi_grab.exe
 
-.PHONY: all windows dist-windows clean
+.PHONY: all windows dist-windows dist-linux clean

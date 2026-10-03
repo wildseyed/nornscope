@@ -311,6 +311,9 @@ int main(int argc, char** argv) {
         fprintf(stderr, "NDI runtime not found or init failed\n"
 #ifdef _WIN32
                         "(install NDI Runtime 6: https://ndi.link/NDIRedistV6)\n"
+#else
+                        "(install libndi from the NDI SDK for Linux:\n"
+                        " https://downloads.ndi.tv/SDK/NDI_SDK_Linux/Install_NDI_SDK_v6_Linux.tar.gz)\n"
 #endif
         );
         return 1;
