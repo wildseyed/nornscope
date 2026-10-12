@@ -111,6 +111,43 @@ to build or run it** — but the Windows machine must have the
 [NDI Runtime 6](https://ndi.link/NDIRedistV6) installed. All other dependencies
 (SDL2.dll, libwinpthread) are included in the zip.
 
+### Windows (native build with MSVC or clang)
+
+Requirements:
+- Visual Studio 2022 (MSVC) or LLVM clang++ targeting MSVC — both work,
+  no Makefile needed
+- [SDL2 VC development package](https://github.com/libsdl-org/SDL/releases)
+  (`SDL2-devel-x.y.z-VC.zip`), unpacked anywhere
+- NDI SDK v6 **headers only** — from the SDK tarball (the Linux one works
+  fine; the headers are platform-independent) or an existing install.
+  NDI itself is loaded at runtime, so no NDI import lib is involved
+
+From a Git Bash prompt:
+
+```sh
+NDI_INC="/c/path/to/NDI SDK for Linux/include"
+SDL2="/c/path/to/SDL2-2.32.10"
+
+clang++ -O2 -I"$NDI_INC" -I"$SDL2/include" -o nornscope.exe \
+    src/nornscope.cpp "$SDL2/lib/x64/SDL2.lib" -lws2_32
+clang++ -O2 -I"$NDI_INC" -I"$SDL2/include" -o ndi_grab.exe \
+    src/ndi_grab.cpp -lws2_32
+```
+
+or with `cl` from a "Developer Command Prompt" (cmd syntax):
+
+```bat
+set NDI_INC=C:\path\to\NDI SDK for Linux\include
+set SDL2=C:\path\to\SDL2-2.32.10
+cl /O2 /I"%NDI_INC%" /I"%SDL2%\include" /Fe:nornscope.exe src\nornscope.cpp "%SDL2%\lib\x64\SDL2.lib" ws2_32.lib
+cl /O2 /I"%NDI_INC%" /I"%SDL2%\include" /Fe:ndi_grab.exe src\ndi_grab.cpp ws2_32.lib
+```
+
+Then copy `SDL2.dll` (from `SDL2\lib\x64\`) next to the executables. As with
+the cross-built binaries, running them requires the
+[NDI Runtime 6](https://ndi.link/NDIRedistV6) installed. Deprecation warnings
+from the NDI v6 headers (`NDIlib_find_create_v2` etc.) are expected.
+
 ### Release artifacts
 
 ```sh
