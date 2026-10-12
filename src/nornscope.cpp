@@ -7,6 +7,7 @@
 // Buttons: click = press+release. Drag off while held = leave held down.
 //          Click a held button again = release.
 // Encoders: mouse wheel over E1/E2/E3. WHEEL_PER_DETENT ticks per step.
+// Right-click: color LUT menu for the 4-bit greyscale screen.
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <string>
 #include <functional>
+#include <vector>
 #include <stdint.h>
 #ifdef _WIN32
   #define SDL_MAIN_HANDLED
@@ -68,9 +70,33 @@ static const Glyph GLYPHS[] = {
     {'1', {0x2,0x6,0x2,0x2,0x7}},
     {'2', {0x6,0x1,0x2,0x4,0x7}},
     {'3', {0x6,0x1,0x2,0x1,0x6}},
-    {'E', {0x7,0x4,0x6,0x4,0x7}},
-    {'K', {0x5,0x6,0x4,0x6,0x5}},
     {'+', {0x0,0x2,0x7,0x2,0x0}},
+    {'A', {0x4,0x2,0x7,0x5,0x5}},
+    {'B', {0x6,0x5,0x6,0x5,0x6}},
+    {'C', {0x7,0x4,0x4,0x4,0x7}},
+    {'D', {0x6,0x5,0x5,0x5,0x6}},
+    {'E', {0x7,0x4,0x6,0x4,0x7}},
+    {'F', {0x7,0x4,0x6,0x4,0x4}},
+    {'G', {0x7,0x4,0x5,0x5,0x3}},
+    {'H', {0x5,0x5,0x7,0x5,0x5}},
+    {'I', {0x7,0x2,0x2,0x2,0x7}},
+    {'J', {0x1,0x1,0x1,0x5,0x2}},
+    {'K', {0x5,0x6,0x4,0x6,0x5}},
+    {'L', {0x4,0x4,0x4,0x4,0x7}},
+    {'M', {0x5,0x7,0x7,0x5,0x5}},
+    {'N', {0x5,0x7,0x7,0x7,0x5}},
+    {'O', {0x2,0x5,0x5,0x5,0x2}},
+    {'P', {0x6,0x5,0x6,0x4,0x4}},
+    {'Q', {0x2,0x5,0x5,0x6,0x3}},
+    {'R', {0x6,0x5,0x6,0x5,0x5}},
+    {'S', {0x7,0x4,0x2,0x1,0x7}},
+    {'T', {0x7,0x2,0x2,0x2,0x2}},
+    {'U', {0x5,0x5,0x5,0x5,0x7}},
+    {'V', {0x5,0x5,0x5,0x2,0x2}},
+    {'W', {0x5,0x5,0x7,0x7,0x5}},
+    {'X', {0x5,0x5,0x2,0x5,0x5}},
+    {'Y', {0x5,0x5,0x2,0x2,0x2}},
+    {'Z', {0x7,0x1,0x2,0x4,0x7}},
 };
 static const Glyph* glyph_for(char c) {
     for (auto& g : GLYPHS) if (g.c == c) return &g;
@@ -89,6 +115,72 @@ static void draw_text(SDL_Renderer* r, int x, int y, const char* s) {
     }
 }
 static int text_w(const char* s) { return (int)strlen(s) * 4 - 1; }
+
+// ---------------- color LUTs ----------------
+// the norns screen is 4-bit greyscale; each LUT maps the 16 levels to a
+// color ramp. entry 0 passes the stream through untouched.
+struct Lut { const char* name; uint32_t map[16]; };  // packed BGRX, matches the texture format
+
+static uint32_t pack_rgb(int r, int g, int b) {
+    // little-endian bytes must come out B,G,R,X to match SDL_PIXELFORMAT_BGRX32
+    return 0xff000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
+}
+struct Stop { float t; int r, g, b; };
+static void ramp16(uint32_t* map, const Stop* st, int n) {
+    for (int i = 0; i < 16; i++) {
+        float t = i / 15.f;
+        int s = 0;
+        while (s + 2 < n && st[s + 1].t < t) s++;
+        const Stop& a = st[s]; const Stop& b = st[s + 1];
+        float f = (t - a.t) / (b.t - a.t);
+        if (f < 0) f = 0; if (f > 1) f = 1;
+        map[i] = pack_rgb(int(a.r + (b.r - a.r) * f + 0.5f),
+                          int(a.g + (b.g - a.g) * f + 0.5f),
+                          int(a.b + (b.b - a.b) * f + 0.5f));
+    }
+}
+static void hsv16(uint32_t* map) {  // level 0 near-black, then a hue sweep
+    map[0] = pack_rgb(8, 8, 8);
+    for (int i = 1; i < 16; i++) {
+        float h = (i - 1) / 14.f * 300.f, v = 0.35f + 0.65f * i / 15.f;
+        int hi = int(h / 60) % 6; float f = h / 60 - int(h / 60);
+        float p = 0.f, q = v * (1 - f), t2 = v * f, r, g, b;
+        switch (hi) {
+            case 0: r=v; g=t2; b=p; break;
+            case 1: r=q; g=v;  b=p; break;
+            case 2: r=p; g=v;  b=t2; break;
+            case 3: r=p; g=q;  b=v; break;
+            case 4: r=t2; g=p; b=v; break;
+            default: r=v; g=p; b=q; break;
+        }
+        map[i] = pack_rgb(int(r*255+0.5f), int(g*255+0.5f), int(b*255+0.5f));
+    }
+}
+static Lut LUTS[] = {
+    {"ORIGINAL", {}},
+    {"AMBER",    {}},
+    {"CYAN",     {}},
+    {"RED",      {}},
+    {"GREEN",    {}},
+    {"INFERNO",  {}},
+    {"ICE",      {}},
+    {"RAINBOW",  {}},
+    {"MAGENTA",  {}},
+};
+static const int NLUT = sizeof LUTS / sizeof LUTS[0];
+static void init_luts() {
+    { Stop s[] = {{0,16,8,2},{0.5f,210,120,25},{1,255,205,120}};  ramp16(LUTS[1].map, s, 3); }
+    { Stop s[] = {{0,2,14,18},{0.5f,25,150,185},{1,170,255,255}}; ramp16(LUTS[2].map, s, 3); }
+    { Stop s[] = {{0,18,2,2},{0.5f,200,35,28},{1,255,120,100}};   ramp16(LUTS[3].map, s, 3); }
+    { Stop s[] = {{0,2,16,4},{0.5f,35,175,65},{1,160,255,170}};   ramp16(LUTS[4].map, s, 3); }
+    { Stop s[] = {{0,8,4,22},{0.35f,130,20,95},{0.7f,235,85,30},{1,255,235,130}}; ramp16(LUTS[5].map, s, 4); }
+    { Stop s[] = {{0,4,10,26},{0.5f,65,125,225},{1,225,245,255}}; ramp16(LUTS[6].map, s, 3); }
+    hsv16(LUTS[7].map);
+    { Stop s[] = {{0,16,2,14},{0.5f,200,35,160},{1,255,150,235}}; ramp16(LUTS[8].map, s, 3); }
+}
+
+// right-click popup menu geometry (logical pixels)
+static const int MENU_PAD = 3, MENU_ROW = 7, MENU_MARK = 5;
 
 // ---------------- base64 (for ws key) ----------------
 static std::string b64(const uint8_t* d, size_t n) {
@@ -394,6 +486,34 @@ int main(int argc, char** argv) {
         }
     };
 
+    init_luts();
+    int lut_sel = 0;
+    bool menu_open = false;
+    int menu_x = 0, menu_y = 0;
+    int menu_w = 2 * MENU_PAD + MENU_MARK;
+    for (int i = 0; i < NLUT; i++) {
+        int w = text_w(LUTS[i].name);
+        if (w + 2 * MENU_PAD + MENU_MARK > menu_w) menu_w = w + 2 * MENU_PAD + MENU_MARK;
+    }
+    const int menu_h = NLUT * MENU_ROW + 2 * MENU_PAD;
+    std::vector<uint32_t> raw, stage;  // last frame as received, and LUT-colored copy
+
+    auto apply_lut = [&]() {
+        if (!tex || raw.empty()) return;
+        if (lut_sel == 0) {
+            stage = raw;
+        } else {
+            const uint32_t* m = LUTS[lut_sel].map;
+            for (size_t i = 0; i < raw.size(); i++) {
+                uint32_t p = raw[i];
+                uint32_t b = p & 0xff, g = (p >> 8) & 0xff, r = (p >> 16) & 0xff;
+                uint32_t v = b > g ? (b > r ? b : r) : (g > r ? g : r);
+                stage[i] = m[v >> 4];
+            }
+        }
+        SDL_UpdateTexture(tex, nullptr, stage.data(), tex_w * 4);
+    };
+
     ws.ensure(6.0);  // first connect attempt now
 
     auto btn_press = [&](Button& b) {
@@ -441,10 +561,36 @@ int main(int argc, char** argv) {
             float lx, ly;
             switch (ev.type) {
             case SDL_QUIT: running = false; break;
+            case SDL_KEYDOWN:
+                if (ev.key.keysym.sym == SDLK_ESCAPE) menu_open = false;
+                break;
             case SDL_MOUSEBUTTONDOWN:
-                if (ev.button.button != SDL_BUTTON_LEFT) break;
                 // sdl2-compat/SDL3 delivers mouse event coords already in logical space
                 lx = ev.button.x; ly = ev.button.y;
+                if (ev.button.button == SDL_BUTTON_RIGHT) {
+                    if (menu_open) {
+                        menu_open = false;
+                    } else {
+                        menu_x = int(lx); menu_y = int(ly);
+                        if (menu_x + menu_w > LW) menu_x = LW - menu_w;
+                        if (menu_y + menu_h > LH) menu_y = LH - menu_h;
+                        if (menu_x < 0) menu_x = 0;
+                        if (menu_y < 0) menu_y = 0;
+                        menu_open = true;
+                    }
+                    break;
+                }
+                if (ev.button.button != SDL_BUTTON_LEFT) break;
+                if (menu_open) {  // menu swallows the click: pick an entry or dismiss
+                    int idx = (int)(ly - menu_y - MENU_PAD) / MENU_ROW;
+                    if (lx >= menu_x && lx < menu_x + menu_w && idx >= 0 && idx < NLUT) {
+                        lut_sel = idx;
+                        fprintf(stderr, "lut: %s\n", LUTS[lut_sel].name);
+                        apply_lut();  // recolor the last frame right away
+                    }
+                    menu_open = false;
+                    break;
+                }
                 fprintf(stderr, "click logical=(%.1f,%.1f)\n", lx, ly);
                 for (int i = 0; i < NBTN; i++) {
                     Button& b = buttons[i];
@@ -506,8 +652,14 @@ int main(int argc, char** argv) {
                     if (tex) SDL_DestroyTexture(tex);
                     tex_w = video.xres; tex_h = video.yres;
                     tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_BGRX32, SDL_TEXTUREACCESS_STREAMING, tex_w, tex_h);
+                    raw.resize((size_t)tex_w * tex_h);
+                    stage.resize((size_t)tex_w * tex_h);
                 }
-                SDL_UpdateTexture(tex, nullptr, video.p_data, video.line_stride_in_bytes);
+                for (int y = 0; y < tex_h; y++)
+                    memcpy(&raw[(size_t)y * tex_w],
+                           (const uint8_t*)video.p_data + (size_t)y * video.line_stride_in_bytes,
+                           (size_t)tex_w * 4);
+                apply_lut();
                 NDI->NDIlib_recv_free_video_v2(recv, &video);
                 break;
             case NDIlib_frame_type_audio:  NDI->NDIlib_recv_free_audio_v3(recv, &audio); break;
@@ -589,6 +741,31 @@ int main(int argc, char** argv) {
             }
             int ty = b.r.y + (b.r.h - 5) / 2;
             draw_text(ren, b.r.x + (b.r.w - text_w(b.label)) / 2, ty, b.label);
+        }
+        if (menu_open) {  // LUT picker overlay
+            SDL_Rect bg{menu_x, menu_y, menu_w, menu_h};
+            SDL_SetRenderDrawColor(ren, 15, 15, 15, 255);
+            SDL_RenderFillRect(ren, &bg);
+            SDL_SetRenderDrawColor(ren, 200, 200, 200, 255);
+            SDL_RenderDrawRect(ren, &bg);
+            int mx, my;
+            SDL_GetMouseState(&mx, &my);
+            float hlx, hly;
+            SDL_RenderWindowToLogical(ren, mx, my, &hlx, &hly);
+            for (int i = 0; i < NLUT; i++) {
+                SDL_Rect row{menu_x + 1, menu_y + MENU_PAD + i * MENU_ROW, menu_w - 2, MENU_ROW};
+                if (hlx >= row.x && hlx < row.x + row.w && hly >= row.y && hly < row.y + row.h) {
+                    SDL_SetRenderDrawColor(ren, 55, 55, 55, 255);
+                    SDL_RenderFillRect(ren, &row);
+                }
+                if (i == lut_sel) {
+                    SDL_SetRenderDrawColor(ren, 250, 190, 80, 255);
+                    SDL_Rect dot{menu_x + MENU_PAD, menu_y + MENU_PAD + i * MENU_ROW + 2, 3, 3};
+                    SDL_RenderFillRect(ren, &dot);
+                }
+                SDL_SetRenderDrawColor(ren, 230, 230, 230, 255);
+                draw_text(ren, menu_x + MENU_PAD + MENU_MARK, menu_y + MENU_PAD + i * MENU_ROW + 1, LUTS[i].name);
+            }
         }
         SDL_RenderPresent(ren);
         SDL_Delay(8);

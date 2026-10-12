@@ -36,6 +36,8 @@ support needed.
   the norns and the on-screen control lights up amber (knobs also track the
   turn); requires the `norns/mod.lua` patch below
 - Connection status dot (green = control channel live, red = dropped)
+- **Color LUTs** — right-click opens a menu to recolor the 4-bit greyscale
+  screen: original, amber, cyan, red, green, inferno, ice, rainbow, magenta
 - **Self-healing connections:** the control channel heartbeats every 3 s and
   reconnects when replies stop, and the video receiver re-runs discovery after
   10 s without frames — a norns reboot recovers by itself within ~15 s
