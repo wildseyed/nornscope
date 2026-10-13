@@ -119,6 +119,9 @@ static int text_w(const char* s) { return (int)strlen(s) * 4 - 1; }
 // ---------------- color LUTs ----------------
 // the norns screen is 4-bit greyscale; each LUT maps the 16 levels to a
 // color ramp. entry 0 passes the stream through untouched.
+// level 0 is the screen background, so it stays black in every LUT; the ramps
+// cover levels 1..15 and are sampled from the visible part of their colormap,
+// so no signal color can come out black or near-black on that background.
 struct Lut { const char* name; uint32_t map[16]; };  // packed BGRX, matches the texture format
 
 static uint32_t pack_rgb(int r, int g, int b) {
@@ -127,7 +130,8 @@ static uint32_t pack_rgb(int r, int g, int b) {
 }
 struct Stop { float t; int r, g, b; };
 static void ramp16(uint32_t* map, const Stop* st, int n) {
-    for (int i = 0; i < 16; i++) {
+    map[0] = pack_rgb(0, 0, 0);
+    for (int i = 1; i < 16; i++) {
         float t = i / 15.f;
         int s = 0;
         while (s + 2 < n && st[s + 1].t < t) s++;
@@ -139,10 +143,10 @@ static void ramp16(uint32_t* map, const Stop* st, int n) {
                           int(a.b + (b.b - a.b) * f + 0.5f));
     }
 }
-static void hsv16(uint32_t* map) {  // level 0 near-black, then a hue sweep
-    map[0] = pack_rgb(8, 8, 8);
+static void hsv16(uint32_t* map) {  // level 0 black, then a hue sweep
+    map[0] = pack_rgb(0, 0, 0);
     for (int i = 1; i < 16; i++) {
-        float h = (i - 1) / 14.f * 300.f, v = 0.35f + 0.65f * i / 15.f;
+        float h = (i - 1) / 14.f * 300.f, v = 0.55f + 0.45f * i / 15.f;
         int hi = int(h / 60) % 6; float f = h / 60 - int(h / 60);
         float p = 0.f, q = v * (1 - f), t2 = v * f, r, g, b;
         switch (hi) {
@@ -159,24 +163,33 @@ static void hsv16(uint32_t* map) {  // level 0 near-black, then a hue sweep
 static Lut LUTS[] = {
     {"ORIGINAL", {}},
     {"AMBER",    {}},
-    {"CYAN",     {}},
-    {"RED",      {}},
-    {"GREEN",    {}},
     {"INFERNO",  {}},
-    {"ICE",      {}},
     {"RAINBOW",  {}},
-    {"MAGENTA",  {}},
+    {"MAGMA",    {}},
+    {"PLASMA",   {}},
+    {"TURBO",    {}},
+    {"JET",      {}},
+    {"HOT",      {}},
+    {"VIRIDIS",  {}},
+    {"NCAR",     {}},
+    {"CUBHELIX", {}},
 };
 static const int NLUT = sizeof LUTS / sizeof LUTS[0];
+// stops are sampled from the matching matplotlib colormap over its visible
+// slice (gist_ncar -> NCAR); jet and turbo are cut off before their dark
+// maroon tails.
 static void init_luts() {
-    { Stop s[] = {{0,16,8,2},{0.5f,210,120,25},{1,255,205,120}};  ramp16(LUTS[1].map, s, 3); }
-    { Stop s[] = {{0,2,14,18},{0.5f,25,150,185},{1,170,255,255}}; ramp16(LUTS[2].map, s, 3); }
-    { Stop s[] = {{0,18,2,2},{0.5f,200,35,28},{1,255,120,100}};   ramp16(LUTS[3].map, s, 3); }
-    { Stop s[] = {{0,2,16,4},{0.5f,35,175,65},{1,160,255,170}};   ramp16(LUTS[4].map, s, 3); }
-    { Stop s[] = {{0,8,4,22},{0.35f,130,20,95},{0.7f,235,85,30},{1,255,235,130}}; ramp16(LUTS[5].map, s, 4); }
-    { Stop s[] = {{0,4,10,26},{0.5f,65,125,225},{1,225,245,255}}; ramp16(LUTS[6].map, s, 3); }
-    hsv16(LUTS[7].map);
-    { Stop s[] = {{0,16,2,14},{0.5f,200,35,160},{1,255,150,235}}; ramp16(LUTS[8].map, s, 3); }
+    { Stop s[] = {{0,110,55,12},{0.5f,210,120,25},{1,255,205,120}};  ramp16(LUTS[1].map, s, 3); }
+    { Stop s[] = {{0,59,9,100},{0.2f,125,30,109},{0.4f,191,57,82},{0.6f,239,108,35},{0.8f,251,184,29},{1,252,255,164}};  ramp16(LUTS[2].map, s, 6); }
+    hsv16(LUTS[3].map);
+    { Stop s[] = {{0,49,17,101},{0.2f,117,33,129},{0.4f,184,55,121},{0.6f,242,98,93},{0.8f,254,176,120},{1,252,253,191}};  ramp16(LUTS[4].map, s, 6); }
+    { Stop s[] = {{0,13,8,135},{0.2f,106,0,168},{0.4f,177,42,144},{0.6f,225,100,98},{0.8f,252,166,54},{1,240,249,33}};   ramp16(LUTS[5].map, s, 6); }
+    { Stop s[] = {{0,55,36,102},{0.2f,66,148,255},{0.4f,34,235,170},{0.6f,175,250,55},{0.8f,252,177,54},{1,223,63,8}};   ramp16(LUTS[6].map, s, 6); }
+    { Stop s[] = {{0,0,0,128},{0.2f,0,44,255},{0.4f,0,216,255},{0.6f,128,255,119},{0.8f,255,222,0},{1,255,63,0}};        ramp16(LUTS[7].map, s, 6); }
+    { Stop s[] = {{0,100,0,0},{0.2f,215,0,0},{0.4f,255,76,0},{0.6f,255,194,0},{0.8f,255,255,82},{1,255,255,255}};        ramp16(LUTS[8].map, s, 6); }
+    { Stop s[] = {{0,71,17,100},{0.2f,61,78,138},{0.4f,39,127,142},{0.6f,38,173,129},{0.8f,129,211,77},{1,253,231,37}};  ramp16(LUTS[9].map, s, 6); }
+    { Stop s[] = {{0,93,0,107},{0.2f,0,75,221},{0.4f,0,162,72},{0.6f,59,255,0},{0.8f,255,129,0},{1,204,204,204}};        ramp16(LUTS[10].map, s, 6); }
+    { Stop s[] = {{0,29,100,67},{0.2f,111,123,49},{0.4f,201,123,127},{0.6f,204,164,226},{0.8f,198,225,241},{1,255,255,255}};  ramp16(LUTS[11].map, s, 6); }
 }
 
 // right-click popup menu geometry (logical pixels)

@@ -37,7 +37,10 @@ support needed.
   turn); requires the `norns/mod.lua` patch below
 - Connection status dot (green = control channel live, red = dropped)
 - **Color LUTs** — right-click opens a menu to recolor the 4-bit greyscale
-  screen: original, amber, cyan, red, green, inferno, ice, rainbow, magenta
+  screen: original, amber, inferno, rainbow, magma, plasma, turbo, jet, hot,
+  viridis, ncar, cubehelix. The multi-color ramps are sampled from the visible
+  slice of their matplotlib colormap: level 0 stays black (the screen
+  background) and no signal level goes near-black, so dim traces never vanish
 - **Self-healing connections:** the control channel heartbeats every 3 s and
   reconnects when replies stop, and the video receiver re-runs discovery after
   10 s without frames — a norns reboot recovers by itself within ~15 s
