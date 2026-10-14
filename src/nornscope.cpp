@@ -41,6 +41,7 @@
   #include <unistd.h>
   #include <fcntl.h>
   #include <netdb.h>
+  #include <errno.h>
   #include <sys/socket.h>
   #include <sys/time.h>
   typedef int SOCKET;
@@ -215,7 +216,9 @@ struct WSClient {
     int port = 5555;
     double last_try = 0;
     double last_hb = 0;
-    int hb_miss = 0;
+    double last_pong = 0;       // last heartbeat echo from matron: proves Lua is executing
+    uint32_t hb_seq = 0;
+    bool just_connected = false;  // set on each (re)connect; main releases held keys
     std::string rx;       // raw bytes, possibly holding partial frames
     std::string textbuf;  // reassembled text payloads, possibly a partial line
     std::function<void(const char*)> on_line;  // called for each "NSQ ..." line
@@ -260,6 +263,8 @@ struct WSClient {
             fd = s;
             rx.clear();
             textbuf.clear();
+            last_pong = SDL_GetTicks() / 1000.0;  // grace period for the watchdog
+            just_connected = true;
             fprintf(stderr, "ws: connected to %s:%d\n", host.c_str(), port);
         } else if (s != INVALID_SOCKET) sock_close(s);
         return ok;
@@ -281,12 +286,19 @@ struct WSClient {
         if (fd == INVALID_SOCKET) return;
         char buf[4096];
         ssize_t n;
-        while ((n = recv(fd, buf, sizeof buf, 0)) > 0) {
-            hb_miss = 0;
+        while ((n = recv(fd, buf, sizeof buf, 0)) > 0)
             rx.append(buf, n);
-        }
         if (n == 0) {  // orderly close from peer
             fprintf(stderr, "ws: peer closed connection\n");
+            disconnect();
+            return;
+        }
+#ifdef _WIN32
+        if (WSAGetLastError() != WSAEWOULDBLOCK) {
+#else
+        if (errno != EWOULDBLOCK && errno != EAGAIN) {
+#endif
+            fprintf(stderr, "ws: socket error, reconnecting\n");
             disconnect();
             return;
         }
@@ -322,27 +334,36 @@ struct WSClient {
         size_t pos;
         while ((pos = textbuf.find('\n')) != std::string::npos) {
             size_t tag = textbuf.find("NSQ ");
-            if (tag != std::string::npos && tag < pos && on_line) {
-                std::string line = textbuf.substr(tag, pos - tag);
-                on_line(line.c_str());
+            if (tag != std::string::npos && tag < pos) {
+                if (textbuf.compare(tag, 8, "NSQ pong") == 0)
+                    last_pong = SDL_GetTicks() / 1000.0;
+                if (on_line) {
+                    std::string line = textbuf.substr(tag, pos - tag);
+                    on_line(line.c_str());
+                }
             }
             textbuf.erase(0, pos + 1);
         }
         if (textbuf.size() > 65536) textbuf.clear();  // safety against garbage
     }
 
-    // matron replies <ok> to every line; if several heartbeats go unanswered
-    // the socket is dead (e.g. device rebooted without a FIN)
+    // heartbeat is a Lua print that echoes back over the broadcast bus as
+    // "NSQ pong <seq>", so it only counts if matron actually executed it —
+    // a live socket with a wedged Lua VM still trips the watchdog
     void heartbeat(double now) {
         if (fd == INVALID_SOCKET) return;
-        if (now - last_hb < 3.0) return;
-        last_hb = now;
-        if (++hb_miss > 4) {
-            fprintf(stderr, "ws: heartbeat lost, reconnecting\n");
+        if (now - last_pong > 12.0) {
+            fprintf(stderr, "ws: watchdog: no heartbeat echo for %.0fs, reconnecting\n",
+                    now - last_pong);
             disconnect();
+            last_try = 0;  // reconnect immediately, don't wait out ensure()'s backoff
             return;
         }
-        send_lua("--hb");
+        if (now - last_hb < 3.0) return;
+        last_hb = now;
+        char b[64];
+        snprintf(b, sizeof b, "print(\"NSQ pong %u\")", ++hb_seq);
+        send_lua(b);
     }
 
     bool send_lua(const char* line) {
@@ -363,18 +384,19 @@ struct WSClient {
     }
 
     // nornscope_remote tells the mod's input hooks these events are ours,
-    // so they don't get reported back as physical activity
+    // so they don't get reported back as physical activity. pcall keeps the
+    // flag from getting stuck if the event handler throws mid-chunk.
     void key(int n, int z) {
-        char b[96]; snprintf(b, sizeof b, "nornscope_remote=true _norns.key(%d,%d) nornscope_remote=false", n, z);
+        char b[96]; snprintf(b, sizeof b, "nornscope_remote=true pcall(_norns.key,%d,%d) nornscope_remote=false", n, z);
         fprintf(stderr, "sent: %s %s\n", b, send_lua(b) ? "" : "(FAILED)");
     }
     // both events in one REPL line so they evaluate back-to-back
     void key2(int a, int za, int b, int zb) {
-        char b_[160]; snprintf(b_, sizeof b_, "nornscope_remote=true _norns.key(%d,%d) _norns.key(%d,%d) nornscope_remote=false", a, za, b, zb);
+        char b_[160]; snprintf(b_, sizeof b_, "nornscope_remote=true pcall(_norns.key,%d,%d) pcall(_norns.key,%d,%d) nornscope_remote=false", a, za, b, zb);
         fprintf(stderr, "sent: %s %s\n", b_, send_lua(b_) ? "" : "(FAILED)");
     }
     void enc(int n, int d) {
-        char b[96]; snprintf(b, sizeof b, "nornscope_remote=true _norns.enc(%d,%d) nornscope_remote=false", n, d);
+        char b[96]; snprintf(b, sizeof b, "nornscope_remote=true pcall(_norns.enc,%d,%d) nornscope_remote=false", n, d);
         if (!send_lua(b)) fprintf(stderr, "sent: %s (FAILED)\n", b);
     }
 };
@@ -558,6 +580,22 @@ int main(int argc, char** argv) {
         ws.drain();
         ws.heartbeat(now_s);
 
+        // session (re)established: the device may still be holding keys that
+        // were down when the previous connection died — release them
+        if (ws.just_connected) {
+            ws.just_connected = false;
+            for (int i = 0; i < NBTN; i++) {
+                Button& b = buttons[i];
+                if (b.held || b.release_pending) {
+                    fprintf(stderr, "release %s (session reset)\n", b.label);
+                    if (b.nkeys == 2) ws.key2(b.keys[0], 0, b.keys[1], 0);
+                    else ws.key(b.keys[0], 0);
+                    b.held = false;
+                    b.release_pending = false;
+                }
+            }
+        }
+
         // deferred combo releases (minimum hold enforcement)
         for (int i = 0; i < NBTN; i++) {
             Button& b = buttons[i];
@@ -689,6 +727,18 @@ int main(int argc, char** argv) {
             for (uint32_t i = 0; i < n2; i++) {
                 if (strstr(list[i].p_ndi_name, match)) {
                     src_copy = list[i];
+                    // the device may have come back with a new IP: retarget the
+                    // ws control channel and drop the stale session
+                    if (src_copy.p_url_address) {
+                        std::string h = src_copy.p_url_address;
+                        auto colon = h.find(':');
+                        if (colon != std::string::npos) h = h.substr(0, colon);
+                        if (h != ws.host)
+                            fprintf(stderr, "ws: host moved %s -> %s\n", ws.host.c_str(), h.c_str());
+                        ws.host = h;
+                    }
+                    ws.disconnect();
+                    ws.last_try = 0;  // reconnect immediately
                     if (recv) NDI->NDIlib_recv_destroy(recv);
                     recv_desc.source_to_connect_to = src_copy;
                     recv = NDI->NDIlib_recv_create_v3(&recv_desc);
@@ -711,9 +761,11 @@ int main(int argc, char** argv) {
         }
         SDL_SetRenderDrawColor(ren, 60, 60, 60, 255);
         SDL_RenderDrawLine(ren, 0, 65, 127, 65);
-        // ws status dot (top-right of controls area)
-        if (ws.connected()) SDL_SetRenderDrawColor(ren, 90, 220, 90, 255);
-        else                SDL_SetRenderDrawColor(ren, 220, 60, 60, 255);
+        // ws status dot (top-right of controls area):
+        // green = healthy, amber = connected but heartbeat echo overdue, red = down
+        if (!ws.connected())                 SDL_SetRenderDrawColor(ren, 220, 60, 60, 255);
+        else if (now_s - ws.last_pong > 6.0) SDL_SetRenderDrawColor(ren, 250, 190, 80, 255);
+        else                                 SDL_SetRenderDrawColor(ren, 90, 220, 90, 255);
         { SDL_Rect dot{122, 67, 4, 4}; SDL_RenderFillRect(ren, &dot); }
 
         for (int i = 0; i < NENC; i++) {  // encoder knobs

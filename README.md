@@ -35,15 +35,22 @@ support needed.
 - **Physical input indicators** — press a real key or turn a real encoder on
   the norns and the on-screen control lights up amber (knobs also track the
   turn); requires the `norns/mod.lua` patch below
-- Connection status dot (green = control channel live, red = dropped)
+- Connection status dot (green = healthy, amber = heartbeat echo overdue,
+  red = control channel down)
 - **Color LUTs** — right-click opens a menu to recolor the 4-bit greyscale
   screen: original, amber, inferno, rainbow, magma, plasma, turbo, jet, hot,
   viridis, ncar, cubehelix. The multi-color ramps are sampled from the visible
   slice of their matplotlib colormap: level 0 stays black (the screen
   background) and no signal level goes near-black, so dim traces never vanish
-- **Self-healing connections:** the control channel heartbeats every 3 s and
-  reconnects when replies stop, and the video receiver re-runs discovery after
-  10 s without frames — a norns reboot recovers by itself within ~15 s
+- **Self-healing connections:** the control channel heartbeats every 3 s with a
+  Lua `print` that echoes back over the websocket bus, so the watchdog only
+  stays quiet if matron is actually executing (a live socket with a wedged Lua
+  VM still trips it after 12 s). The video receiver re-runs discovery after
+  10 s without frames, and if the norns comes back with a new IP the control
+  channel retargets to it — a norns reboot recovers by itself within ~15 s
+- Held keys are released whenever a control session is (re)established, so a
+  reconnect can't leave the device holding a key that was down when the
+  previous connection died
 - Every key/encoder injection is logged with the exact Lua sent; send failures
   are marked loudly
 - All keys released on exit so the device is never left with a stuck key
@@ -182,7 +189,9 @@ freezes on the last script frame whenever you enter the system menu (K1).
    script change), and
 2. wraps `_norns.key` / `_norns.enc` to report physical input to nornscope
    (the indicator feature above). The tagged lines also show up in the
-   maiden console — filter on `NSQ` if you want to watch them.
+   maiden console — filter on `NSQ` if you want to watch them, and
+3. wraps `ndi_mod.update()` in `pcall`, so a single bad frame can't kill
+   the stream metro.
 
 To install it, copy the file over the one ndi-mod shipped, keeping a backup
 of the original:
@@ -251,8 +260,10 @@ src/ndi_grab.cpp   single-frame CLI grabber / connectivity test
 src/ndi_loader.h   runtime NDI loading (dynamic DLL resolution on Windows)
 tools/ws_send.py   minimal stdlib websocket client for the matron REPL
 tools/ws_q.py      same, printing matron's replies
+tools/ws_q_host.py ws_q.py with an explicit host argument
 norns/mod.lua      ndi-mod patch: stream system menus too + report physical input
 Makefile           native + mingw cross-build (set NDI_SDK=, SDL2_MINGW=)
+build-win.bat      one-shot native MSVC build (finds vcvars64 itself)
 ```
 
 ## License

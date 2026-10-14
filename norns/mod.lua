@@ -37,7 +37,8 @@ local this_name = mod.this_name
 -- (metros are freed on script reload, so this is (re)started in script_post_init too)
 local function start_stream_metro()
   if ndi_stream_metro then pcall(function() ndi_stream_metro:stop() end) end
-  ndi_stream_metro = metro.init(function() ndi_mod.update() end, 1/15)
+  -- pcall: a single bad frame must not kill the stream
+  ndi_stream_metro = metro.init(function() pcall(ndi_mod.update) end, 1/15)
   ndi_stream_metro:start()
 end
 
@@ -76,7 +77,7 @@ mod.hook.register("script_post_init", "ndi-script-post-init", function()
   start_stream_metro()
   local script_refresh_fn = norns.script.refresh
   norns.script.refresh = function()
-    ndi_mod.update()
+    pcall(ndi_mod.update)
     script_refresh_fn()
   end
 end)

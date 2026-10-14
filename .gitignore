@@ -3,6 +3,7 @@ ndi_grab
 *.exe
 dist/
 sdl2-mingw/
+sdl2-vc/
 ndi-sdk
 *.o
 __pycache__/
